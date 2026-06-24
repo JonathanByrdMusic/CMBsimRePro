@@ -899,98 +899,137 @@
 	// The main function to update the sky image
 	Sky.prototype.update = function(){
 
-		var d = new Date();
+    var d = new Date();
 
-		try {
+    try {
 
-			var val = 0, p = 0, x, y, scale, re, im, mx, mn;
+        var val = 0, p = 0, x, y, scale, re, im, mx, mn;
+        var audioBins = new Array(11).fill(0);
 
-			// Get the pre-processed FFT data
-			re = this.re.slice(0);	// We need a copy of the array, not a reference
-			im = this.im.slice(0);	// We need a copy of the array, not a reference
+        re = this.re.slice(0);
+        im = this.im.slice(0);
 
-			if(this.context.ps.data[0].length == 2){
-				this.canvas.ctx.fillStyle = '#ffffff';
-				this.canvas.ctx.fillRect(0, 0, this.w, this.h);
-				// Hide the Our/Current labels
-				$('.labels').hide();
-				return;
-			}else{
-				// Show the Our/Current labels if necessary
-				if(!$('.labels').is(':visible')) $('.labels').show();
-			}
+        if(this.context.ps.data[0].length == 2){
+            this.canvas.ctx.fillStyle = '#ffffff';
+            this.canvas.ctx.fillRect(0, 0, this.w, this.h);
+            $('.labels').hide();
+            return;
+        }else{
+            if(!$('.labels').is(':visible')) $('.labels').show();
+        }
 
-			// Filter the FFT
-			FrequencyFilter.swap(re, im);
-			FrequencyFilter.filter(re, im, this.context.ps.data);
+        FrequencyFilter.swap(re, im);
+        FrequencyFilter.filter(re, im, this.context.ps.data);
 
-			// Calculate the 2D FFT but don't bother showing it
-			//SpectrumViewer.render(re, im, false);
+        FrequencyFilter.swap(re, im);
 
-			// FFT back into real space
-			FrequencyFilter.swap(re, im);
+        FFT.ifft2d(re, im);
 
-			FFT.ifft2d(re, im);
+        if(this.fixedscale){
+            mx = 0.11;
+            mn = -0.11;
+        }else{
+            mx = Math.max.apply(null,re);
+            mn = Math.min.apply(null,re);
+        }
 
-			// Loop over the data setting the value
-			// First work out a scaling function
-			if(this.fixedscale){
-				mx = 0.11;
-				mn = -0.11;
-			}else{
-				mx = Math.max.apply(null,re);
-				mn = Math.min.apply(null,re);
-			}
+        scale = 255/(mx-mn);
 
-			scale = 255/(mx-mn);
+        for(y = 0,i = 0; y < this.h; y++, i+=this.w) {
+            for(x = 0; x < this.w; x++) {
 
-			for(y = 0,i = 0; y < this.h; y++, i+=this.w) {
-				for(x = 0; x < this.w; x++) {
-					val = Math.round((re[i + x]-mn)*scale);
-					val = val > 255 ? 255 : val < 0 ? 0 : val;
-					p = (i << 2) + (x << 2);
-					// Set colour using pre-calculated colour table
-					this.data[p] = this.colours[val][0];
-					this.data[p+1] = this.colours[val][1];
-					this.data[p+2] = this.colours[val][2];
-				}
-			}
+                val = Math.round((re[i + x]-mn)*scale);
+                val = val > 255 ? 255 : val < 0 ? 0 : val;
 
-			// Draw the final output
-			this.canvas.ctx.putImageData(this.src, 0, 0);
+                var audioBin = Math.floor(val / 256 * 11);
+                if(audioBin > 10) audioBin = 10;
+                audioBins[audioBin]++;
 
-			if(this.showours){
-				// Save the canvas context before defining a clipping region
-				// so we can return to the default state later
-				this.canvas.ctx.save();
-				// Draw a triangular region
-				this.canvas.ctx.beginPath();
-				this.canvas.ctx.moveTo(this.w,0);
-				this.canvas.ctx.lineTo(this.w*0.4,0);
-				this.canvas.ctx.lineTo(this.w,this.h*0.6);
-				this.canvas.ctx.lineTo(this.w,0);
-				this.canvas.ctx.clip();
+                p = (i << 2) + (x << 2);
 
-				// Draw the image for our universe
-				this.canvas.ctx.drawImage(this.our, 0, 0, this.w, this.h);
+                this.data[p] = this.colours[val][0];
+                this.data[p+1] = this.colours[val][1];
+                this.data[p+2] = this.colours[val][2];
+            }
+        }
 
-				// Restore the canvas context to its original state
-				this.canvas.ctx.restore();
+        if(this.context.audio && this.context.audio.context && this.context.ps.data) {
 
-				// Draw a line to help distinguish universes
-				this.canvas.ctx.beginPath();
-				this.canvas.ctx.moveTo(this.w*0.4,0);
-				this.canvas.ctx.lineTo(this.w,this.h*0.6);
-				this.canvas.ctx.strokeStyle = "#fff";
-				this.canvas.ctx.stroke();
-			}
+    var ell = this.context.ps.data[0];
+    var power = this.context.ps.data[1];
 
-		} catch(e) {
-			this.log('update() fail');
+    var bins = new Array(11).fill(0);
+    var counts = new Array(11).fill(0);
+
+    var minEll = ell[0];
+    var maxEll = ell[ell.length - 1];
+
+    for(var j = 0; j < ell.length; j++) {
+        var bin = Math.floor((ell[j] - minEll) / (maxEll - minEll) * 11);
+        if(bin < 0) bin = 0;
+        if(bin > 10) bin = 10;
+
+        bins[bin] += power[j];
+        counts[bin]++;
+    }
+
+    var maxBin = 0;
+
+    for(var j = 0; j < bins.length; j++) {
+        if(counts[j] > 0) bins[j] = bins[j] / counts[j];
+        if(bins[j] > maxBin) maxBin = bins[j];
+    }
+
+    var amps = bins.map(function(v) {
+        if(maxBin === 0) return 0.001;
+        return 0.18 * Math.sqrt(v / maxBin);
+    });
+
+    this.context.audio.setAmplitudes(amps);
+
+	var cold = audioBins[0] + audioBins[1] + audioBins[2];
+	var hot  = audioBins[8] + audioBins[9] + audioBins[10];
+
+	var hotness = 0.5;
+
+	if((hot + cold) > 0) {
+    	hotness = hot / (hot + cold);
+	}
+
+this.context.audio.setHotness(hotness);
+
 		}
 
-		this.log("Total for Sky.prototype.update():" + (new Date() - d) + "ms");
-	}
+        this.canvas.ctx.putImageData(this.src, 0, 0);
+
+        if(this.showours){
+            this.canvas.ctx.save();
+
+            this.canvas.ctx.beginPath();
+            this.canvas.ctx.moveTo(this.w,0);
+            this.canvas.ctx.lineTo(this.w*0.4,0);
+            this.canvas.ctx.lineTo(this.w,this.h*0.6);
+            this.canvas.ctx.lineTo(this.w,0);
+            this.canvas.ctx.clip();
+
+            this.canvas.ctx.drawImage(this.our, 0, 0, this.w, this.h);
+
+            this.canvas.ctx.restore();
+
+            this.canvas.ctx.beginPath();
+            this.canvas.ctx.moveTo(this.w*0.4,0);
+            this.canvas.ctx.lineTo(this.w,this.h*0.6);
+            this.canvas.ctx.strokeStyle = "#fff";
+            this.canvas.ctx.stroke();
+        }
+
+    } catch(e) {
+        this.log('update() fail');
+        console.log(e);
+    }
+
+    this.log("Total for Sky.prototype.update():" + (new Date() - d) + "ms");
+}
 
 
 	/**
@@ -1428,14 +1467,77 @@
 		// Define a callback for the PowerSpectrum
 		inp.context = this;
 		inp.updated = function(e){
-			if(this.sky){
-				_obj.update(e);
-				this.sky.update();
-			}
+    		if(this.sky){
+        		_obj.update(e);
+        		this.sky.update();
+        		_obj.updateAudioEQFromSpectrum();
+    		}
 		}
 
 		// Make an instance of a power spectrum
 		this.ps = new PowerSpectrum(inp);
+
+		// Audio system
+		this.audio = new CMBAudio();
+
+		this.updateAudioEQFromSpectrum = function() {
+
+    if (!this.audio || !this.ps || !this.ps.data) return;
+
+    var ell = this.ps.data[0];
+    var power = this.ps.data[1];
+
+    var peaks = [];
+
+    for (var i = 1; i < power.length - 1; i++) {
+
+        var isPeak = power[i] > power[i - 1] && power[i] > power[i + 1];
+
+        if (isPeak && ell[i] > 100) {
+            peaks.push({
+                ell: ell[i],
+                power: power[i],
+                index: i
+            });
+        }
+    }
+
+    peaks = peaks.slice(0, 5);
+
+    if (peaks.length === 0) return;
+
+    var maxPower = 0;
+
+    for (var i = 0; i < peaks.length; i++) {
+        if (peaks[i].power > maxPower) maxPower = peaks[i].power;
+    }
+
+    var settings = [];
+
+    for (var i = 0; i < peaks.length; i++) {
+
+        var peak = peaks[i];
+
+        var frequency = 80 + (peak.ell / 1500) * 1600;
+        frequency = Math.max(80, Math.min(2500, frequency));
+
+        var gain = 18 * Math.sqrt(peak.power / maxPower);
+        gain = Math.max(0, Math.min(18, gain));
+
+        var q = 2 + i * 2.25;
+
+        settings.push({
+            frequency: frequency,
+            gain: gain,
+            q: q
+        });
+    }
+
+    console.log("Detected peaks:", peaks);
+    console.log("EQ settings:", settings);
+
+    this.audio.setSpectrumEQ(settings);
+};
 
 		// Make an instance of a view of part of the sky
 		this.sky = new Sky(inp);
@@ -1488,7 +1590,19 @@
 		);
 
 		// Set up the configuration form
-		$('#config form').append('<div class="configoption"><input type="checkbox" name="showscale" /><label for="showscale">Show angular scale</label></a></div><div class="configoption"><input type="checkbox" name="showours" /><label for="showours">Show our universe</label></a></div><div class="configoption"><input type="checkbox" name="normscale" /><label for="normscale">Normalise scale</label></div><!--<div class="configoption"><label for="colourtable">Colour scheme</label>: <select name="colourtable" id="colourtable"><option value="planck">Planck</option><option value="blackbody">Heat</option><option value="A">A</option><option value="B">B</option></select></div>-->');
+		$('#config form').append(
+    		'<div class="configoption"><input type="checkbox" name="showscale" /><label for="showscale">Show angular scale</label></div>' +
+    		'<div class="configoption"><input type="checkbox" name="showours" /><label for="showours">Show our universe</label></div>' +
+    		'<div class="configoption"><input type="checkbox" name="normscale" /><label for="normscale">Normalise scale</label></div>' +
+    		'<div class="configoption"><label for="volume">Audio volume</label>: <input type="range" name="volume" min="0" max="1" step="0.01" value="0.5" /></div>'
+		);
+		$('#config form input[name=volume]').on('input change',{me:this},function(e){
+    		var sim = e.data.me;
+    		var value = parseFloat($(this).val());
+
+    		sim.audio.masterVolume = value;
+    		sim.audio.setVolume(value);
+		});
 		$('#config form input[name=showscale]').attr('checked',this.sky.showscale).on('click',{me:this},function(e){
 			var sim = e.data.me;
 			sim.sky.showscale = $(this).is(':checked');
@@ -1522,18 +1636,38 @@
 
 
 		// Bind keyboard events
-		$(document).bind('keypress',{sim:this},function(e){
-			if(!e) e=window.event;
-			sim = e.data.sim;
-			var code = e.keyCode || e.charCode || e.which || 0;
-			var c = String.fromCharCode(code).toLowerCase();
-			if(c=='a') sim.ps.toggle();
-			else if(c=='b') sim.omega_b.slider.find('.ui-slider-handle').focus();
-			else if(c=='c') sim.omega_c.slider.find('.ui-slider-handle').focus();
-			else if(c=='l') sim.omega_l.slider.find('.ui-slider-handle').focus();
-			else if(c=='i') window.location.href = switchHash();
-			else if(c=='f') sim.ps.toggleFullScreen();
-		});
+		$(document).bind('keydown',{sim:this},function(e){
+
+    if(!e) e = window.event;
+
+    var sim = e.data.sim;
+    var code = e.keyCode || e.charCode || e.which || 0;
+    var c = String.fromCharCode(code).toLowerCase();
+
+    if(code == 32) {
+        e.preventDefault();
+
+        if (!sim.audio.context) {
+            sim.audio.startTone();
+
+            if (sim.sky) {
+                sim.sky.update();
+            }
+
+        } else {
+            sim.audio.stopTone();
+        }
+
+        return false;
+    }
+
+    if(c=='a') sim.ps.toggle();
+    else if(c=='b') sim.omega_b.slider.find('.ui-slider-handle').focus();
+    else if(c=='c') sim.omega_c.slider.find('.ui-slider-handle').focus();
+    else if(c=='l') sim.omega_l.slider.find('.ui-slider-handle').focus();
+    else if(c=='i') window.location.href = switchHash();
+    else if(c=='f') sim.ps.toggleFullScreen();
+});
 
 		// Bind window resize event for when people change the size of their browser
 		$(window).bind("resize",{me:this},function(ev){
@@ -1564,7 +1698,7 @@
 			if(location.hash.substring(1)!="about" && $('#help').hasClass('on')) toggleAbout();
 		},500);
 
-		var newdiv = $('<div id="menu"><div id="help" class="toggle"><a href="#about" class="abouton">i</a><a href="#" class="aboutoff">&#8679;</a></div><div id="advancedtoggle" class="toggle"><a href="#powerspectrum"><img src="media/img/cleardot.gif" alt="Plot" title="Toggle power spectrum plot" /></a></div><div id="configtoggle" class="toggle"><a href="#config"><img src="media/img/cleardot.gif" alt="Options" title="Toggle options" /></a></div><div id="refreshtoggle" class="toggle"><a href="#"><img src="media/img/cleardot.gif" alt="Plot" title="Refresh page" /></a></div></div>');
+		var newdiv = $('<div id="menu"><div id="help" class="toggle"><a href="#about" class="abouton">i</a><a href="#" class="aboutoff">&#8679;</a></div><div id="advancedtoggle" class="toggle"><a href="#powerspectrum"><img src="media/img/cleardot.gif" alt="Plot" title="Toggle power spectrum plot" /></a></div><div id="configtoggle" class="toggle"><a href="#config"><img src="media/img/cleardot.gif" alt="Options" title="Toggle options" /></a></div><div id="audiotoggle" class="toggle"><a href="#"><img src="media/img/cleardot.gif" alt="Audio" title="Toggle audio" /></a></div><div id="refreshtoggle" class="toggle"><a href="#"><img src="media/img/cleardot.gif" alt="Refresh" title="Refresh page" /></a></div></div>');
 		$('h1').before(newdiv);
 		$('#help .abouton a, #help .aboutoff a').on('click',toggleAbout);
 		$('#advancedtoggle a').on('click',{me:this},function(e){
@@ -1575,6 +1709,26 @@
 		$('#configtoggle').on('click',{me:this},function(e){
 			lightbox($('#config'),$('#configtoggle'));
 		});
+		$('#audiotoggle').on('click',{me:this},function(e){
+			e.preventDefault();
+
+    		var sim = e.data.me;
+
+    		if (!sim.audio.context) {
+    			sim.audio.startTone();
+
+    			// Immediately push the current simulator-derived amplitudes
+    			// instead of waiting for the next slider update.
+    			if (sim.sky) {
+        			sim.sky.update();
+    			}
+
+			} else {
+    			sim.audio.stopTone();
+			}
+
+		});
+
         $('#refreshtoggle').on('click',{me:this},function(e){
             var sim=e.data.me;
             sim.omega_b.setRandom();
@@ -1608,6 +1762,7 @@
 		this.omega_l.setRandom();
 		this.ps.loadData('omega_b',this.omega_b.value,this.omega_c.value,this.omega_l.value);
 
+		window.sim = this;
 
 		return this;
 	}

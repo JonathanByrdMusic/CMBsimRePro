@@ -101,6 +101,7 @@ body.adv #advancedtoggle a { background-color: black; }
 .toggle a:hover, .toggle a:focus { background-color: #E13F29; transition: background-color 0.5s; }
 #configtoggle a { background-position: 0 -48px; }
 #refreshtoggle a { background-position: 0 -96px; }
+#audiotoggle a { background-position: 0 -144px; }
 
 #header { margin-top: 16px; }
 img.logo {
